@@ -14,6 +14,7 @@ import {
   renderWelcomeEmail,
 } from '@/components/emails'
 import { getFromEmailAddress, quickValidateEmail, sendEmail } from '@/lib/messaging/email'
+import { getActiveProviderName } from '@/lib/messaging/email/mailer'
 import { isEmailVerificationEnabled } from '@/config/feature-flags'
 
 export const auth = betterAuth({
@@ -26,10 +27,10 @@ export const auth = betterAuth({
   advanced: {
     cookiePrefix: APP_COOKIE_NAME, // Change this to your cookie prefix
     crossSubDomainCookies: {
-      enabled: !isProd,
+      enabled: isProd,
       domain: '.shipfree.app', // Change this to your domain, if you are using a custom domain
     },
-    useSecureCookies: !isProd,
+    useSecureCookies: isProd,
   },
 
   session: {
@@ -161,13 +162,21 @@ export const auth = betterAuth({
             emailType: 'transactional',
           })
 
-          if (!result.success && result.message.includes('no email service configured')) {
+          const otpWasLoggedOnly =
+            getActiveProviderName() === 'log' ||
+            result.message.toLowerCase().includes('logged')
+
+          if (!isProd || otpWasLoggedOnly) {
             console.info('🔑 VERIFICATION CODE FOR LOGIN/SIGNUP', {
               email: data.email,
               otp: data.otp,
               type: data.type,
+              provider: getActiveProviderName(),
               validation: validation.checks,
             })
+          }
+
+          if (!result.success && result.message.includes('no email service configured')) {
             return
           }
 

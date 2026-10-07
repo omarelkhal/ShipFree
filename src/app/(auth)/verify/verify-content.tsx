@@ -10,9 +10,16 @@ import { useVerification } from './use-verification'
 
 interface VerifyContentProps {
   isProduction: boolean
+  initialEmail?: string | null
 }
 
-function VerificationForm({ isProduction }: { isProduction: boolean }) {
+function VerificationForm({
+  isProduction,
+  initialEmail = null,
+}: {
+  isProduction: boolean
+  initialEmail?: string | null
+}) {
   const {
     otp,
     email,
@@ -21,10 +28,11 @@ function VerificationForm({ isProduction }: { isProduction: boolean }) {
     isInvalidOtp,
     errorMessage,
     isOtpComplete,
+    isContextReady,
     verifyCode,
     resendCode,
     handleOtpChange,
-  } = useVerification({ isProduction })
+  } = useVerification({ isProduction, initialEmail })
 
   const [countdown, setCountdown] = useState(0)
   const [isResendDisabled, setIsResendDisabled] = useState(false)
@@ -47,6 +55,17 @@ function VerificationForm({ isProduction }: { isProduction: boolean }) {
     setCountdown(30)
   }
 
+  if (!isContextReady) {
+    return (
+      <div className='text-center'>
+        <div className='animate-pulse'>
+          <div className='mx-auto mb-4 h-8 w-48 rounded bg-gray-200' />
+          <div className='mx-auto h-4 w-64 rounded bg-gray-200' />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
       <div className='space-y-1 text-center'>
@@ -56,7 +75,7 @@ function VerificationForm({ isProduction }: { isProduction: boolean }) {
         <p className='font-[380] text-[16px] text-muted-foreground'>
           {isVerified
             ? 'Your email has been verified. Redirecting to dashboard...'
-            : `A verification code has been sent to ${email || 'your email'}`}
+            : `A verification code has been sent to ${email}`}
         </p>
       </div>
 
@@ -177,7 +196,7 @@ function VerificationForm({ isProduction }: { isProduction: boolean }) {
                   sessionStorage.removeItem('inviteRedirectUrl')
                   sessionStorage.removeItem('isInviteFlow')
                 }
-                router.push('/signup')
+                router.push('/register')
               }}
               className='font-medium text-(--brand-accent-hex) underline-offset-4 transition hover:text-(--brand-accent-hover-hex) hover:underline'
             >
@@ -201,10 +220,10 @@ function VerificationFormFallback() {
   )
 }
 
-export function VerifyContent({ isProduction }: VerifyContentProps) {
+export function VerifyContent({ isProduction, initialEmail = null }: VerifyContentProps) {
   return (
     <Suspense fallback={<VerificationFormFallback />}>
-      <VerificationForm isProduction={isProduction} />
+      <VerificationForm isProduction={isProduction} initialEmail={initialEmail} />
     </Suspense>
   )
 }

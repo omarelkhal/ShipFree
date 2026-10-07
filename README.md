@@ -4,9 +4,6 @@ Hi there! 👋
 
 ShipFree is a free alternative to ShipFast, designed to simplify and optimize your shipping process. It’s built using modern web technologies like Next.js, Bun, Stripe, Drizzle ORM, Postgres and Tailwindcss.
 
-> [!TIP]
-> [DolOffer](https://doloffer.com) is a digital subscription sharing and recharge platform for streaming, AI, music, productivity, cloud storage, and learning products.
-
 ## Features
 
 - SEO Optimization

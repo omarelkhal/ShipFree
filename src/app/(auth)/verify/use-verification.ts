@@ -7,6 +7,7 @@ import { client, useSession } from '@/lib/auth/auth-client'
 
 interface UseVerificationParams {
   isProduction: boolean
+  initialEmail?: string | null
 }
 
 interface UseVerificationReturn {
@@ -18,15 +19,21 @@ interface UseVerificationReturn {
   errorMessage: string
   isOtpComplete: boolean
   isProduction: boolean
+  isContextReady: boolean
   verifyCode: () => Promise<void>
   resendCode: () => void
   handleOtpChange: (value: string) => void
 }
 
-export function useVerification({ isProduction }: UseVerificationParams): UseVerificationReturn {
+const getOtpType = (fromSignup: boolean) => (fromSignup ? 'email-verification' : 'sign-in')
+
+export function useVerification({
+  isProduction,
+  initialEmail = null,
+}: UseVerificationParams): UseVerificationReturn {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { refetch: refetchSession } = useSession()
+  const { data: session, isPending: isSessionPending, refetch: refetchSession } = useSession()
   const [otp, setOtp] = useState('')
   const [email, setEmail] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -35,18 +42,16 @@ export function useVerification({ isProduction }: UseVerificationParams): UseVer
   const [isInvalidOtp, setIsInvalidOtp] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [redirectUrl, setRedirectUrl] = useState<string | null>(null)
+  const [isContextReady, setIsContextReady] = useState(false)
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const storedEmail = sessionStorage.getItem('verificationEmail')
-      if (storedEmail) {
-        setEmail(storedEmail)
-      }
+    if (typeof window === 'undefined') {
+      return
+    }
 
-      const storedRedirectUrl = sessionStorage.getItem('inviteRedirectUrl')
-      if (storedRedirectUrl) {
-        setRedirectUrl(storedRedirectUrl)
-      }
+    const storedRedirectUrl = sessionStorage.getItem('inviteRedirectUrl')
+    if (storedRedirectUrl) {
+      setRedirectUrl(storedRedirectUrl)
     }
 
     const redirectParam = searchParams.get('redirectAfter')
@@ -56,10 +61,58 @@ export function useVerification({ isProduction }: UseVerificationParams): UseVer
   }, [searchParams])
 
   useEffect(() => {
-    if (email && !isSendingInitialOtp) {
-      setIsSendingInitialOtp(true)
+    if (isSessionPending) {
+      return
     }
-  }, [email, isSendingInitialOtp])
+
+    if (session?.user.emailVerified) {
+      window.location.href = '/dashboard'
+      return
+    }
+
+    const storedEmail = sessionStorage.getItem('verificationEmail')?.trim().toLowerCase() ?? ''
+    const sessionEmail = session?.user.email?.trim().toLowerCase() ?? ''
+    const serverEmail = initialEmail?.trim().toLowerCase() ?? ''
+    const resolvedEmail = storedEmail || sessionEmail || serverEmail
+
+    if (!resolvedEmail) {
+      router.replace('/register')
+      return
+    }
+
+    setEmail(resolvedEmail)
+
+    if (!storedEmail) {
+      sessionStorage.setItem('verificationEmail', resolvedEmail)
+    }
+
+    setIsContextReady(true)
+  }, [initialEmail, isSessionPending, router, session])
+
+  useEffect(() => {
+    const fromSignup = searchParams.get('fromSignup') === 'true'
+
+    if (!isContextReady || !email || isSendingInitialOtp) {
+      return
+    }
+
+    setIsSendingInitialOtp(true)
+    setIsLoading(true)
+    setErrorMessage('')
+
+    const normalizedEmail = email.trim().toLowerCase()
+    client.emailOtp
+      .sendVerificationOtp({
+        email: normalizedEmail,
+        type: getOtpType(fromSignup),
+      })
+      .catch(() => {
+        setErrorMessage('Failed to send verification code. Check email settings and try Resend.')
+      })
+      .finally(() => {
+        setIsLoading(false)
+      })
+  }, [email, isContextReady, isSendingInitialOtp, searchParams])
 
   const isOtpComplete = otp.length === 6
 
@@ -72,10 +125,17 @@ export function useVerification({ isProduction }: UseVerificationParams): UseVer
 
     try {
       const normalizedEmail = email.trim().toLowerCase()
-      const response = await client.signIn.emailOtp({
-        email: normalizedEmail,
-        otp,
-      })
+      const fromSignup = searchParams.get('fromSignup') === 'true'
+
+      const response = fromSignup
+        ? await client.emailOtp.verifyEmail({
+            email: normalizedEmail,
+            otp,
+          })
+        : await client.signIn.emailOtp({
+            email: normalizedEmail,
+            otp,
+          })
 
       if (response && !response.error) {
         setIsVerified(true)
@@ -86,6 +146,10 @@ export function useVerification({ isProduction }: UseVerificationParams): UseVer
           console.warn('Failed to refetch session after verification', e)
         }
 
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem('verificationEmail')
+        }
+
         setTimeout(() => {
           if (redirectUrl) {
             window.location.href = redirectUrl
@@ -94,35 +158,26 @@ export function useVerification({ isProduction }: UseVerificationParams): UseVer
           }
         }, 1000)
       } else {
-        console.info('Setting invalid OTP state - API error response')
         const message = 'Invalid verification code. Please check and try again.'
         setIsInvalidOtp(true)
         setErrorMessage(message)
-        console.info('Error state after API error:', {
-          isInvalidOtp: true,
-          errorMessage: message,
-        })
         setOtp('')
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       let message = 'Verification failed. Please check your code and try again.'
+      const errorMessageText =
+        error instanceof Error ? error.message : typeof error === 'string' ? error : ''
 
-      if (error.message?.includes('expired')) {
+      if (errorMessageText.includes('expired')) {
         message = 'The verification code has expired. Please request a new one.'
-      } else if (error.message?.includes('invalid')) {
-        console.info('Setting invalid OTP state - caught error')
+      } else if (errorMessageText.includes('invalid')) {
         message = 'Invalid verification code. Please check and try again.'
-      } else if (error.message?.includes('attempts')) {
+      } else if (errorMessageText.includes('attempts')) {
         message = 'Too many failed attempts. Please request a new code.'
       }
 
       setIsInvalidOtp(true)
       setErrorMessage(message)
-      console.info('Error state after caught error:', {
-        isInvalidOtp: true,
-        errorMessage: message,
-      })
-
       setOtp('')
     } finally {
       setIsLoading(false)
@@ -136,12 +191,13 @@ export function useVerification({ isProduction }: UseVerificationParams): UseVer
     setErrorMessage('')
 
     const normalizedEmail = email.trim().toLowerCase()
+    const fromSignup = searchParams.get('fromSignup') === 'true'
+
     client.emailOtp
       .sendVerificationOtp({
         email: normalizedEmail,
-        type: 'sign-in',
+        type: getOtpType(fromSignup),
       })
-      .then(() => {})
       .catch(() => {
         setErrorMessage('Failed to resend verification code. Please try again later.')
       })
@@ -159,14 +215,14 @@ export function useVerification({ isProduction }: UseVerificationParams): UseVer
   }
 
   useEffect(() => {
-    if (otp.length === 6 && email && !isLoading && !isVerified) {
+    if (otp.length === 6 && email && !isLoading && !isVerified && isContextReady) {
       const timeoutId = setTimeout(() => {
-        verifyCode()
+        void verifyCode()
       }, 300)
 
       return () => clearTimeout(timeoutId)
     }
-  }, [otp, email, isLoading, isVerified])
+  }, [otp, email, isLoading, isVerified, isContextReady])
 
   return {
     otp,
@@ -177,6 +233,7 @@ export function useVerification({ isProduction }: UseVerificationParams): UseVer
     errorMessage,
     isOtpComplete,
     isProduction,
+    isContextReady,
     verifyCode,
     resendCode,
     handleOtpChange,
